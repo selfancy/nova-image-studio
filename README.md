@@ -357,6 +357,7 @@ NOVA_ACCEPT_NEW_TASKS=false
 ---
 ## Star History
 
+
 <a href="https://www.star-history.com/?repos=tianjiangqiji%2Fnova-image-studio&type=date&legend=top-left">
  <picture>
    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=tianjiangqiji/nova-image-studio&type=date&theme=dark&legend=top-left" />
