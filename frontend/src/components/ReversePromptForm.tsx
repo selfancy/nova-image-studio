@@ -35,6 +35,7 @@ import {
   type ReversePromptModelId,
 } from '@/lib/reverse-prompt-config';
 import { getConfiguredTextModel } from '@/lib/model-endpoints';
+import { hasNovaApiBaseUrlOverride } from '@/lib/nova-server-config';
 import {
   clearReverseDraft,
   loadReverseResults,
@@ -259,7 +260,7 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
   const handleSubmit = () => {
     if (!pendingFile || streaming || disabled) return;
     const configuredModel = getConfiguredTextModel(model);
-    if (!configuredModel?.apiKey || !configuredModel.baseUrl || !configuredModel.modelId) {
+    if (!configuredModel?.apiKey || !(configuredModel.baseUrl || hasNovaApiBaseUrlOverride()) || !configuredModel.modelId) {
       setMissingApiKeyDialogOpen(true);
       return;
     }

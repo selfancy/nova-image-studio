@@ -1,15 +1,15 @@
-// 反推提示词的前端直连流式客户端
+// 反推提示词流式客户端：前端只请求本机后端代理。
 // 根据模型分发：
 //   - gpt-5.4-mini          → POST /v1/responses          （OpenAI Responses API + reasoning.high）
 //   - gemini-2.5-flash      → POST /v1beta/.../streamGenerateContent?alt=sse （Google 原生流式）
-// 所有请求直接从浏览器发到外部 API（baseUrl 参数指定），不经过我们自己的服务器。
 
 import {
   REVERSE_PROMPT_TEMPLATES,
   type ReversePromptMode,
   type ReversePromptModelId,
 } from '@/lib/reverse-prompt-config';
-import { buildGeminiStreamGenerateContentUrl, buildResponsesApiUrl, getConfiguredTextModel } from '@/lib/model-endpoints';
+import { getConfiguredTextModel } from '@/lib/model-endpoints';
+import { fetchGoogleStreamGenerateContentViaProxy, fetchOpenAiResponsesViaProxy } from '@/lib/nova-api-proxy-client';
 import { readSseStream } from '@/lib/sse-stream-parser';
 
 export interface StreamReverseInput {
@@ -100,14 +100,10 @@ async function streamOpenAiResponses(
     ],
   };
 
-  const response = await fetch(buildResponsesApiUrl(baseUrl), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${input.apiKey}`,
-      Accept: 'text/event-stream',
-    },
-    body: JSON.stringify(body),
+  const response = await fetchOpenAiResponsesViaProxy({
+    apiKey: input.apiKey,
+    body,
+    stream: true,
     signal,
   });
 
@@ -230,16 +226,10 @@ async function streamGeminiGenerateContent(
     },
   };
 
-  const url = buildGeminiStreamGenerateContentUrl(baseUrl, input.model);
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${input.apiKey}`,
-      'x-goog-api-key': input.apiKey,
-      Accept: 'text/event-stream',
-    },
-    body: JSON.stringify(body),
+  const response = await fetchGoogleStreamGenerateContentViaProxy({
+    apiKey: input.apiKey,
+    model: input.model,
+    body,
     signal,
   });
 

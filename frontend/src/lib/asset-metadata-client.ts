@@ -1,6 +1,6 @@
 'use client';
 
-
+import { fetchOpenAiResponsesViaProxy } from '@/lib/nova-api-proxy-client';
 
 const ASSET_METADATA_MODEL = 'gpt-5.4-mini';
 
@@ -77,14 +77,10 @@ export async function generateAssetMetadata(input: GenerateAssetMetadataInput): 
     ],
   };
 
-  const baseUrl = input.baseUrl || 'https://api.openai.com';
-  const response = await fetch(`${baseUrl}/v1/responses`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${input.apiKey}`,
-    },
-    body: JSON.stringify(body),
+  const response = await fetchOpenAiResponsesViaProxy({
+    apiKey: input.apiKey,
+    body,
+    stream: false,
   });
 
   if (!response.ok) {

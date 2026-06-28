@@ -1,5 +1,5 @@
-// Agent 模式的浏览器直连客户端
-// 文本对话与视觉描述都打外部 API /v1/responses（与反推提示词一致，不经过自有后端）。
+// Agent 模式的后端代理客户端。
+// 文本对话与视觉描述都通过本机后端代理访问 /v1/responses。
 // 对话请求带 tools，解析文字 delta 与 function_call 事件；描述请求为非流式一次性取全文。
 
 import {
@@ -11,7 +11,6 @@ import {
   type AgentProposal,
   type AgentActionType,
 } from '@/lib/agent-chat-config';
-import { buildResponsesApiUrl } from '@/lib/model-endpoints';
 import {
   normalizeGptImageBackground,
   normalizeGptImageQuality,
@@ -19,6 +18,7 @@ import {
 } from '@/lib/model-capabilities';
 
 import { readSseStream } from '@/lib/sse-stream-parser';
+import { fetchOpenAiResponsesViaProxy } from '@/lib/nova-api-proxy-client';
 
 const AGENT_GPT_REQUEST_MAX_ATTEMPTS = 3;
 const AGENT_CHAT_ATTEMPT_TIMEOUT_MS = 45_000;
@@ -223,14 +223,10 @@ async function runAgentStream(
     input: buildInputMessages(input.history),
   };
 
-  const response = await fetch(buildResponsesApiUrl(baseUrl), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${input.apiKey}`,
-      Accept: 'text/event-stream',
-    },
-    body: JSON.stringify(body),
+  const response = await fetchOpenAiResponsesViaProxy({
+    apiKey: input.apiKey,
+    body,
+    stream: true,
     signal,
   });
 
@@ -384,13 +380,10 @@ async function requestImageDescription(
     ],
   };
 
-  const response = await fetch(buildResponsesApiUrl(baseUrl), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
+  const response = await fetchOpenAiResponsesViaProxy({
+    apiKey,
+    body,
+    stream: false,
     signal,
   });
 

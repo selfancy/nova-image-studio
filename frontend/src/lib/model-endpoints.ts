@@ -7,6 +7,7 @@ import {
   type ProviderProtocol,
   type TextModelConfig,
 } from '@/lib/nova-models';
+import { getNovaApiBaseUrlOverride } from '@/lib/nova-server-config';
 
 function trimTrailingSlashes(value: string): string {
   return String(value || '').trim().replace(/\/+$/, '');
@@ -54,7 +55,7 @@ export function requireDefaultConfiguredTextModel(
   task: 'reversePrompt' | 'agent' | 'promptOptimize' | 'imageDescribe',
 ): TextModelConfig {
   const configured = getDefaultConfiguredTextModel(task);
-  if (!configured?.apiKey || !configured.baseUrl || !configured.modelId) {
+  if (!configured?.apiKey || !(configured.baseUrl || getNovaApiBaseUrlOverride()) || !configured.modelId) {
     throw new Error('请先在设置中完成默认文本模型配置');
   }
   return configured;

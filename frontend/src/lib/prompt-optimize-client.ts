@@ -1,8 +1,9 @@
-// 提示词优化流式客户端
-// 复用外部 API /v1/responses 端点（baseUrl 参数指定），根据模式附带不同 system prompt。
+// 提示词优化流式客户端。
+// 通过本机后端代理访问 /v1/responses，根据模式附带不同 system prompt。
 // 图生图/动图模式会将参考图作为 input_image 一并发送（单次请求完成）。
 
 import { readSseStream } from '@/lib/sse-stream-parser';
+import { fetchOpenAiResponsesViaProxy } from '@/lib/nova-api-proxy-client';
 
 const OPTIMIZE_MODEL = 'gpt-5.4-mini';
 const OPTIMIZE_TIMEOUT_MS = 30_000;
@@ -230,14 +231,10 @@ async function runAttempt(
   }, OPTIMIZE_TIMEOUT_MS);
 
   try {
-    const response = await fetch(`${baseUrl}/v1/responses`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${input.apiKey}`,
-        Accept: 'text/event-stream',
-      },
-      body: JSON.stringify(body),
+    const response = await fetchOpenAiResponsesViaProxy({
+      apiKey: input.apiKey,
+      body,
+      stream: true,
       signal,
     });
 

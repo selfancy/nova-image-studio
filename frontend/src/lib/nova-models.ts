@@ -151,27 +151,31 @@ function normalizeImageOutputSize(value: unknown, fallback: ImageOutputSize): Im
     : fallback;
 }
 
+function normalizeStringField(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 function inferBuiltinPresetId(raw: Partial<ImageModelConfig>): BuiltinImagePresetId {
   const candidate = raw.builtinPreset || raw.id || raw.modelId;
   if (isBuiltinImagePresetId(candidate)) return candidate;
-  if (String(raw.protocol || '').trim() === 'google') return 'gemini-3-pro-image-preview';
+  if (normalizeStringField(raw.protocol) === 'google') return 'gemini-3-pro-image-preview';
   return 'gpt-image-2';
 }
 
 function normalizeImageModelConfig(raw: Partial<ImageModelConfig>): ImageModelConfig | null {
   const presetId = inferBuiltinPresetId(raw);
   const preset = BUILTIN_IMAGE_PRESETS[presetId];
-  const id = String(raw.id || '').trim();
+  const id = normalizeStringField(raw.id);
   if (!id) return null;
 
   const protocol = isProviderProtocol(raw.protocol) ? raw.protocol : preset.protocol;
   return {
     id,
     protocol,
-    name: String(raw.name || '').trim(),
-    modelId: String(raw.modelId || '').trim(),
-    apiKey: String(raw.apiKey || '').trim(),
-    baseUrl: String(raw.baseUrl || preset.baseUrl).trim(),
+    name: normalizeStringField(raw.name),
+    modelId: normalizeStringField(raw.modelId),
+    apiKey: normalizeStringField(raw.apiKey),
+    baseUrl: normalizeStringField(raw.baseUrl) || preset.baseUrl,
     builtinPreset: presetId,
     maxRefImages: Number.isFinite(raw.maxRefImages) && Number(raw.maxRefImages) > 0
       ? Math.max(1, Math.floor(Number(raw.maxRefImages)))
@@ -184,38 +188,38 @@ function normalizeImageModelConfig(raw: Partial<ImageModelConfig>): ImageModelCo
 }
 
 function normalizeTextModelConfig(raw: Partial<TextModelConfig>): TextModelConfig | null {
-  const id = String(raw.id || '').trim();
+  const id = normalizeStringField(raw.id);
   if (!id) return null;
   const protocol = isProviderProtocol(raw.protocol) ? raw.protocol : 'openai';
   const template = getDefaultTextModelTemplate(protocol);
   return {
     id,
     protocol,
-    name: String(raw.name || '').trim(),
-    modelId: String(raw.modelId || '').trim(),
-    apiKey: String(raw.apiKey || '').trim(),
-    baseUrl: String(raw.baseUrl || template.baseUrl).trim(),
+    name: normalizeStringField(raw.name),
+    modelId: normalizeStringField(raw.modelId),
+    apiKey: normalizeStringField(raw.apiKey),
+    baseUrl: normalizeStringField(raw.baseUrl) || template.baseUrl,
     note: typeof raw.note === 'string' ? raw.note : template.note,
   };
 }
 
 function isCompleteImageModel(model: Partial<ImageModelConfig>): model is ImageModelConfig {
   return Boolean(
-    model.id
-    && model.name?.trim()
-    && model.modelId?.trim()
-    && model.apiKey?.trim()
-    && model.baseUrl?.trim()
+    normalizeStringField(model.id)
+    && normalizeStringField(model.name)
+    && normalizeStringField(model.modelId)
+    && normalizeStringField(model.apiKey)
+    && normalizeStringField(model.baseUrl)
   );
 }
 
 function isCompleteTextModel(model: Partial<TextModelConfig>): model is TextModelConfig {
   return Boolean(
-    model.id
-    && model.name?.trim()
-    && model.modelId?.trim()
-    && model.apiKey?.trim()
-    && model.baseUrl?.trim()
+    normalizeStringField(model.id)
+    && normalizeStringField(model.name)
+    && normalizeStringField(model.modelId)
+    && normalizeStringField(model.apiKey)
+    && normalizeStringField(model.baseUrl)
   );
 }
 

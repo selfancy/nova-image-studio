@@ -2,6 +2,7 @@ const http = require('http');
 const { createHash, randomUUID } = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { Readable } = require('stream');
 const next = process.env.NODE_ENV !== 'production' ? require('next') : null;
 const Database = require('better-sqlite3');
 const { WebSocketServer } = require('ws');
@@ -96,6 +97,14 @@ function resolveNovaApiBaseUrl() {
   return normalizeBaseUrl(getRuntimeEnv().NOVA_API_BASE_URL) || 'https://api.openai.com';
 }
 
+function resolveRequestBaseUrl(protocol) {
+  return normalizeProtocolBaseUrl(protocol, normalizeBaseUrl(getRuntimeEnv().NOVA_API_BASE_URL));
+}
+
+function isServerImageSaveEnabled() {
+  return String(getRuntimeEnv().NOVA_SAVE_IMAGE_ENABLED || '').trim() === 'true';
+}
+
 function hashPromptGalleryPassword(password) {
   return createHash('sha256')
     .update(`${PROMPT_GALLERY_PASSWORD_SALT}${String(password || '')}`)
@@ -108,6 +117,8 @@ const DB_PATH = process.env.NOVA_TASK_DB || path.join(__dirname, 'nova-tasks.sql
 const TASK_TTL_MS = 12 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const MODEL_CHECK_TIMEOUT_MS = 30 * 1000;
+const IMAGE_DELETE_AFTER_FETCH_GRACE_MS = 10 * 1000;
 const IMAGE_STREAM_UNSUPPORTED_PATTERN = /(?:stream.*(?:unsupported|not supported|unknown|unrecognized|invalid)|(?:unsupported|not supported|unknown|unrecognized|invalid).*stream|stream.*(?:不支持|未知|无效)|(?:不支持|未知|无效).*stream)/i;
 // 开源版：不再硬编码模型列表，由前端通过 protocol 字段指定协议类型
 const VALID_PROTOCOLS = new Set(['google', 'openai']);
@@ -140,6 +151,7 @@ const rateLimitBuckets = new Map(); // key -> { windowStart: number, count: numb
 const pendingCountByIp = new Map(); // ip -> count
 const pendingCountByApiKeyHash = new Map(); // apiKeyHash -> count
 const queue = [];
+const imageDeleteTimers = new Map(); // filePath -> timeout
 let activeCount = 0;
 
 // ===== WebSocket subscription state =====
@@ -388,6 +400,11 @@ function getTaskImageFiles(taskId) {
 }
 
 function deleteImageFile(filePath, _taskId) {
+  const timer = imageDeleteTimers.get(filePath);
+  if (timer) {
+    clearTimeout(timer);
+    imageDeleteTimers.delete(filePath);
+  }
   try {
     if (!fs.existsSync(filePath)) {
       return { success: true, reason: 'not_found' };
@@ -417,6 +434,17 @@ function deleteTaskImageFiles(taskId) {
   }
   console.log(`[image-lifecycle] 任务图片清理完成: taskId=${taskId}, total=${files.length}, success=${successCount}, notFound=${notFoundCount}, failed=${failedCount}`);
   return { total: files.length, success: successCount, notFound: notFoundCount, failed: failedCount };
+}
+
+function scheduleDeleteImageFile(filePath, taskId) {
+  const existing = imageDeleteTimers.get(filePath);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    imageDeleteTimers.delete(filePath);
+    deleteImageFile(filePath, taskId);
+  }, IMAGE_DELETE_AFTER_FETCH_GRACE_MS);
+  timer.unref?.();
+  imageDeleteTimers.set(filePath, timer);
 }
 
 function initDatabase() {
@@ -511,10 +539,17 @@ function getContentType(filePath) {
 
 // 统一的文件流响应：必须挂 'error' 监听，否则流中途出错（文件被删 / EACCES /
 // 磁盘错）会抛出未捕获异常拖垮整个进程。头已发出时只能断开连接。
-function pipeFileToResponse(res, filePath, statusCode, headers) {
+function pipeFileToResponse(res, filePath, statusCode, headers, onDone) {
   const stream = fs.createReadStream(filePath);
+  let doneCalled = false;
+  const done = (success) => {
+    if (doneCalled) return;
+    doneCalled = true;
+    onDone?.(success);
+  };
   stream.on('error', error => {
     console.warn(`[static] 文件流读取失败: ${filePath}`, error?.message || error);
+    done(false);
     if (!res.headersSent) {
       res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('Internal Server Error');
@@ -522,6 +557,8 @@ function pipeFileToResponse(res, filePath, statusCode, headers) {
       res.destroy(error);
     }
   });
+  res.on('finish', () => done(true));
+  res.on('close', () => done(false));
   res.writeHead(statusCode, headers);
   stream.pipe(res);
 }
@@ -630,15 +667,15 @@ function normalizeGptImageAdvancedParams(params = {}) {
 function validateCreatePayload(body) {
   if (!body || typeof body !== 'object') throw new Error('请求体不能为空');
   if (typeof body.apiKey !== 'string' || body.apiKey.trim().length === 0) throw new Error('缺少 API 密钥');
-  if (typeof body.baseUrl !== 'string' || body.baseUrl.trim().length === 0) throw new Error('缺少 API 基础地址');
   if (!VALID_PROTOCOLS.has(body.protocol)) throw new Error('协议类型无效，必须为 google 或 openai');
+  if (!normalizeBaseUrl(getRuntimeEnv().NOVA_API_BASE_URL)) throw new Error('缺少环境变量 NOVA_API_BASE_URL');
   if (body.mode !== 'text-to-image' && body.mode !== 'image-to-image') throw new Error('任务模式无效');
   if (typeof body.prompt !== 'string' || body.prompt.trim().length === 0) throw new Error('提示词不能为空');
   if (typeof body.model !== 'string' || body.model.trim().length === 0) throw new Error('模型名称不能为空');
   if (!Number.isInteger(body.parallelCount) || body.parallelCount < 1 || body.parallelCount > 4) throw new Error('并发数量无效');
 
   if (!Array.isArray(body.images)) body.images = [];
-  body.baseUrl = normalizeProtocolBaseUrl(body.protocol, body.baseUrl);
+  body.baseUrl = resolveRequestBaseUrl(body.protocol);
   if (!body.baseUrl) throw new Error('缺少 API 基础地址');
   // 开源版：不做模型级参数规范化，前端负责传递正确的参数，后端无条件透传
 }
@@ -1066,9 +1103,9 @@ try {
   console.warn('[network] undici Agent 配置失败，使用默认设置:', e?.message || e);
 }
 
-async function fetchWithTimeout(url, init) {
+async function fetchWithTimeout(url, init, timeoutMs = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { ...init, signal: controller.signal });
   } finally {
@@ -1076,9 +1113,292 @@ async function fetchWithTimeout(url, init) {
   }
 }
 
+function getProxyRequestPayload(body) {
+  const payload = body?.body || body?.request;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('缺少 API 请求体');
+  }
+  return payload;
+}
+
+function getProxyApiKey(body) {
+  const apiKey = String(body?.apiKey || '').trim();
+  if (!apiKey) throw new Error('缺少 API 密钥');
+  return apiKey;
+}
+
+function getProxyBaseUrl(body, protocol) {
+  if (!VALID_PROTOCOLS.has(protocol)) throw new Error('协议类型无效，必须为 google 或 openai');
+  const baseUrl = resolveRequestBaseUrl(protocol);
+  if (!baseUrl) throw new Error('缺少环境变量 NOVA_API_BASE_URL');
+  return baseUrl;
+}
+
+function getProxyModelId(body) {
+  const model = String(body?.model || '').trim();
+  if (!model) throw new Error('缺少模型名称');
+  return model;
+}
+
+function getProxyToken(body) {
+  const token = String(body?.token || '').trim();
+  if (!token) throw new Error('缺少登录 token');
+  return token;
+}
+
+function buildApiUrl(baseUrl, pathname) {
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+  const normalizedPathname = String(pathname || '').startsWith('/')
+    ? String(pathname || '')
+    : `/${String(pathname || '')}`;
+  return `${normalizedBaseUrl}${normalizedPathname}`;
+}
+
+function getProxyResponseHeaders(upstreamResponse) {
+  const headers = {
+    'Cache-Control': 'no-store',
+  };
+  const contentType = upstreamResponse.headers.get('content-type');
+  if (contentType) headers['Content-Type'] = contentType;
+  const contentLength = upstreamResponse.headers.get('content-length');
+  if (contentLength) headers['Content-Length'] = contentLength;
+  return headers;
+}
+
+async function pipeUpstreamResponse(upstreamResponse, res) {
+  res.writeHead(upstreamResponse.status, getProxyResponseHeaders(upstreamResponse));
+  if (!upstreamResponse.body) {
+    res.end();
+    return;
+  }
+
+  await new Promise((resolve, reject) => {
+    const stream = Readable.fromWeb(upstreamResponse.body);
+    let settled = false;
+    const settle = (error) => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error);
+      else resolve();
+    };
+    stream.on('error', error => {
+      console.warn('[api-proxy] 上游响应流读取失败:', error?.message || error);
+      if (!res.headersSent) {
+        settle(error);
+      } else {
+        try { res.destroy(error); } catch { /* ignore */ }
+        settle();
+      }
+    });
+    res.on('error', settle);
+    res.on('finish', () => settle());
+    res.on('close', () => settle());
+    stream.pipe(res);
+  });
+}
+
+async function handleOpenAiResponsesProxy(req, res) {
+  const body = await readJsonBody(req);
+  const apiKey = getProxyApiKey(body);
+  const baseUrl = getProxyBaseUrl(body, 'openai');
+  const payload = getProxyRequestPayload(body);
+  const upstreamResponse = await fetchWithTimeout(`${baseUrl}/v1/responses`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+      'Accept': body?.stream === false ? 'application/json' : 'text/event-stream, application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  await pipeUpstreamResponse(upstreamResponse, res);
+}
+
+async function handleGoogleStreamGenerateContentProxy(req, res) {
+  const body = await readJsonBody(req);
+  const apiKey = getProxyApiKey(body);
+  const baseUrl = getProxyBaseUrl(body, 'google');
+  const model = getProxyModelId(body);
+  const payload = getProxyRequestPayload(body);
+  const upstreamResponse = await fetchWithTimeout(`${baseUrl}/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+      'x-goog-api-key': apiKey,
+      'Accept': 'text/event-stream, application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  await pipeUpstreamResponse(upstreamResponse, res);
+}
+
+function normalizeProxyApiKeyItem(item) {
+  if (!item || typeof item !== 'object') return null;
+  const group = item.group && typeof item.group === 'object' ? item.group : {};
+  const key = String(item.key || '').trim();
+  const id = String(item.id || key).trim();
+  const name = String(item.name || '').trim();
+  const groupName = String(group.name || '').trim();
+  if (!id || !key) return null;
+  const label = `${groupName || '未分组'} | ${name || '未命名密钥'}`;
+  return {
+    id,
+    key,
+    name,
+    groupName,
+    platform: normalizeApiKeyPlatform(group.platform),
+    status: String(item.status || '').trim(),
+    groupStatus: String(group.status || '').trim(),
+    label,
+  };
+}
+
+function normalizeApiKeyPlatform(value) {
+  const platform = String(value || '').trim().toLowerCase();
+  return platform === 'google' ? 'gemini' : platform;
+}
+
+async function handleApiKeysProxy(req, res) {
+  const body = await readJsonBody(req);
+  const token = getProxyToken(body);
+  const baseUrl = normalizeBaseUrl(getRuntimeEnv().NOVA_API_BASE_URL);
+  if (!baseUrl) throw new Error('缺少环境变量 NOVA_API_BASE_URL');
+
+  const upstreamResponse = await fetchWithTimeout(buildApiUrl(baseUrl, '/api/v1/keys'), {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/json',
+      'User-Agent': 'curl/8.7.1',
+    },
+  }, MODEL_CHECK_TIMEOUT_MS);
+  const responseText = await upstreamResponse.text().catch(() => '');
+  const data = parseJsonSafely(responseText);
+  if (!upstreamResponse.ok) {
+    const detail = getErrorMessageFromPayload(data) || getMessageFromPayload(data) || summarizeUnexpectedResponse(responseText);
+    sendJson(res, upstreamResponse.status, { error: detail || `密钥列表请求失败: ${upstreamResponse.status}` });
+    return;
+  }
+  const items = Array.isArray(data?.data?.items) ? data.data.items : [];
+  sendJson(res, 200, items.map(normalizeProxyApiKeyItem).filter(Boolean));
+}
+
+function getProxyModelCheckErrorText(text) {
+  const trimmed = String(text || '').trim();
+  const data = parseJsonSafely(trimmed);
+  const message = getErrorMessageFromPayload(data) || getMessageFromPayload(data);
+  if (message) return message;
+  return trimmed.length > 120 ? `${trimmed.slice(0, 120)}…` : trimmed;
+}
+
+async function readProxyModelCheckJson(response) {
+  const text = await response.text().catch(() => '');
+  if (!response.ok) {
+    const detail = getProxyModelCheckErrorText(text);
+    return { ok: false, message: `${response.status}${detail ? ` ${detail}` : ''}` };
+  }
+  const data = parseJsonSafely(text);
+  if (!data) {
+    const summary = summarizeUnexpectedResponse(text);
+    return { ok: false, message: summary ? `响应 JSON 格式无效: ${summary}` : '响应 JSON 格式无效' };
+  }
+  return { ok: true, data };
+}
+
+function hasModelInList(protocol, data, modelId) {
+  if (protocol === 'google') {
+    return Array.isArray(data?.models) && data.models.some(item => String(item?.name || '').includes(modelId));
+  }
+  return Array.isArray(data?.data) && data.data.some(item => String(item?.id || item?.model || '') === modelId);
+}
+
+async function checkProxyModelAvailability(model) {
+  const id = String(model?.id || '').trim();
+  const name = String(model?.name || '').trim();
+  const protocol = model?.protocol;
+  const modelId = String(model?.modelId || '').trim();
+  const apiKey = String(model?.apiKey || '').trim();
+  const kind = model?.kind === 'image' ? 'image' : 'text';
+
+  if (!id || !VALID_PROTOCOLS.has(protocol) || !modelId || !apiKey) {
+    return { modelId: id, actualName: name, available: false, message: '模型配置不完整' };
+  }
+
+  const baseUrl = resolveRequestBaseUrl(protocol);
+  if (!baseUrl) {
+    return { modelId: id, actualName: name, available: false, message: '缺少环境变量 NOVA_API_BASE_URL' };
+  }
+
+  try {
+    if (kind === 'image' || protocol === 'google') {
+      const listUrl = protocol === 'google'
+        ? `${baseUrl}/v1beta/models`
+        : `${baseUrl}/v1/models`;
+      const response = await fetchWithTimeout(listUrl, {
+        method: 'GET',
+        headers: protocol === 'google'
+          ? {
+              'x-goog-api-key': apiKey,
+              'Authorization': `Bearer ${apiKey}`,
+            }
+          : {
+              'Authorization': `Bearer ${apiKey}`,
+            },
+      }, MODEL_CHECK_TIMEOUT_MS);
+      const result = await readProxyModelCheckJson(response);
+      if (!result.ok) {
+        return { modelId: id, actualName: name, available: false, message: result.message };
+      }
+      const exists = hasModelInList(protocol, result.data, modelId);
+      return {
+        modelId: id,
+        actualName: name,
+        available: exists,
+        message: exists ? modelId : `未在 /models 中找到 ${modelId}`,
+      };
+    }
+
+    const response = await fetchWithTimeout(`${baseUrl}/v1/responses`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({
+        model: modelId,
+        stream: false,
+        input: 'hi',
+        max_output_tokens: 4,
+      }),
+    }, MODEL_CHECK_TIMEOUT_MS);
+    if (!response.ok) {
+      const detail = getProxyModelCheckErrorText(await response.text().catch(() => ''));
+      return {
+        modelId: id,
+        actualName: name,
+        available: false,
+        message: `${response.status}${detail ? ` ${detail}` : ''}`,
+      };
+    }
+    return { modelId: id, actualName: name, available: true, message: '文本响应正常' };
+  } catch (error) {
+    return { modelId: id, actualName: name, available: false, message: normalizeError(error) };
+  }
+}
+
+async function handleModelCheckProxy(req, res) {
+  const body = await readJsonBody(req);
+  const models = Array.isArray(body?.models) ? body.models : [];
+  const statuses = await Promise.all(models.map(checkProxyModelAvailability));
+  sendJson(res, 200, statuses);
+}
+
 async function generateNovaImage(apiKey, request) {
   // 开源版：根据前端传入的 protocol 字段路由到对应的 API 协议
-  const baseUrl = request.baseUrl || resolveNovaApiBaseUrl();
+  const baseUrl = resolveRequestBaseUrl(request.protocol);
+  if (!baseUrl) throw new Error('缺少环境变量 NOVA_API_BASE_URL');
   if (request.protocol === 'openai') {
     return requestGptImage(apiKey, request, resolveGptImageRequestSize(request), { baseUrl });
   }
@@ -1509,12 +1829,15 @@ async function handleApi(req, res, pathname) {
       const env = getRuntimeEnv();
       const rawMode = String(env.PROMPT_GALLERY_MODE || '2').trim();
       const mode = ['1', '2', '3'].includes(rawMode) ? rawMode : '2';
+      const novaApiBaseUrl = normalizeBaseUrl(env.NOVA_API_BASE_URL);
       sendJson(
         res,
         200,
         {
           promptGalleryMode: mode,
           promptGalleryPasswordEnabled: String(env.PROMPT_GALLERY_PASSWORD || '').trim().length > 0,
+          novaApiBaseUrl,
+          novaApiBaseUrlLocked: novaApiBaseUrl.length > 0 && String(env.NOVA_API_BASE_URL_LOCK || '').trim() === 'true',
         },
         {
           'Cache-Control': 'no-store, no-cache, must-revalidate',
@@ -1537,6 +1860,26 @@ async function handleApi(req, res, pathname) {
       const password = String(body?.password || '');
       const ok = hashPromptGalleryPassword(password) === hashPromptGalleryPassword(expected);
       sendJson(res, 200, { ok });
+      return true;
+    }
+
+    if (req.method === 'POST' && apiPathname === '/api/nova/proxy/openai/responses') {
+      await handleOpenAiResponsesProxy(req, res);
+      return true;
+    }
+
+    if (req.method === 'POST' && apiPathname === '/api/nova/proxy/google/stream-generate-content') {
+      await handleGoogleStreamGenerateContentProxy(req, res);
+      return true;
+    }
+
+    if (req.method === 'POST' && apiPathname === '/api/nova/proxy/keys') {
+      await handleApiKeysProxy(req, res);
+      return true;
+    }
+
+    if (req.method === 'POST' && apiPathname === '/api/nova/proxy/models/check') {
+      await handleModelCheckProxy(req, res);
       return true;
     }
 
@@ -1577,6 +1920,10 @@ async function handleApi(req, res, pathname) {
           'Content-Type': getContentType(filePath),
           'Content-Length': stat.size,
           'Cache-Control': 'private, max-age=3600',
+        }, success => {
+          if (success && !isServerImageSaveEnabled()) {
+            scheduleDeleteImageFile(filePath, taskId);
+          }
         });
       } catch {
         sendJson(res, 404, { error: 'Not Found' });
@@ -1606,8 +1953,12 @@ async function handleApi(req, res, pathname) {
       const ACK_GRACE_MS = 120 * 1000;
       const existing = db.prepare('SELECT id FROM tasks WHERE id = ?').get(taskId);
       if (existing) {
+        const saveEnabled = isServerImageSaveEnabled();
+        if (!saveEnabled) {
+          deleteTaskImageFiles(taskId);
+        }
         db.prepare('UPDATE tasks SET expires_at = ? WHERE id = ?').run(
-          new Date(Date.now() + ACK_GRACE_MS).toISOString(), taskId
+          new Date(Date.now() + (saveEnabled ? ACK_GRACE_MS : 0)).toISOString(), taskId
         );
       }
       sendJson(res, 200, { ok: true });

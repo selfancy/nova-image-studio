@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { loadNovaServerConfig } from '@/lib/nova-server-config';
 
 // 1 = 常驻（直接显示） 2 = 私密（需密码） 3 = 关闭（完全隐藏）
 export type PromptGalleryMode = '1' | '2' | '3';
@@ -12,13 +13,11 @@ export function usePromptGalleryConfig() {
   useEffect(() => {
     let cancelled = false;
 
-    fetch('/api/nova/config', { cache: 'no-store' })
-      .then(res => res.json())
-      .then((data: { promptGalleryMode?: string; promptGalleryPasswordEnabled?: boolean }) => {
+    loadNovaServerConfig()
+      .then((data) => {
         if (cancelled) return;
-        const raw = data.promptGalleryMode;
-        setMode(raw === '1' || raw === '3' ? raw : '2');
-        setPasswordEnabled(Boolean(data.promptGalleryPasswordEnabled));
+        setMode(data.promptGalleryMode);
+        setPasswordEnabled(data.promptGalleryPasswordEnabled);
       })
       .catch(() => {
         // 网络失败时保持默认值 '2'

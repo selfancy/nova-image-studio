@@ -41,6 +41,7 @@ import {
   type PendingGenerationData,
 } from '@/lib/agent-context-store';
 import { getDefaultConfiguredTextModel } from '@/lib/model-endpoints';
+import { hasNovaApiBaseUrlOverride } from '@/lib/nova-server-config';
 
 export type AgentPhase = 'idle' | 'loading' | 'describing' | 'streaming' | 'proposal' | 'generating';
 
@@ -198,7 +199,7 @@ export function useAgentChat() {
 
   const getAgentTextModelConfig = useCallback(() => {
     const configured = getDefaultConfiguredTextModel('agent');
-    if (!configured?.apiKey || !configured.baseUrl || !configured.modelId) {
+    if (!configured?.apiKey || !(configured.baseUrl || hasNovaApiBaseUrlOverride()) || !configured.modelId) {
       throw new Error('请先在设置中完成 Agent 默认文本模型配置');
     }
     if (configured.protocol !== 'openai') {

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createNovaTask, getNovaTask, ackNovaTask, resolveImageTaskProvider, type ImageReference } from '@/lib/ccode-task-client';
+import { hasNovaApiBaseUrlOverride } from '@/lib/nova-server-config';
 import { novaTaskSocket } from '@/lib/ccode-task-socket';
 import { generateUUID } from '@/lib/uuid';
 import {
@@ -282,7 +283,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
       setIsApiKeyMissing(true);
       throw new Error('请先完成 GIF 图片模型配置');
     }
-    if (!provider.apiKey || !provider.baseUrl) {
+    if (!provider.apiKey || !(provider.baseUrl || hasNovaApiBaseUrlOverride())) {
       setIsApiKeyMissing(true);
       throw new Error('请先完成 GIF 图片模型配置');
     }

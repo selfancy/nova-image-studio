@@ -53,6 +53,8 @@ import { checkModelsAvailability, type ModelStatus } from '@/lib/ccode-task-clie
 import { hasAnyApiKey } from '@/lib/settings-storage';
 import { BA_RANDOM_URL, BING_WALLPAPER_URL } from '@/lib/constants';
 import { PROMPT_DATA_SOURCES, getPromptSourceLabel } from '@/lib/prompt-gallery-data';
+import { loadNovaServerConfig, type NovaServerConfig } from '@/lib/nova-server-config';
+import { loadNovaApiKeys, type NovaApiKeyOption } from '@/lib/nova-api-keys-client';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -97,12 +99,26 @@ function createTextModelDraft(): TextModelConfig {
   };
 }
 
-function isCompleteImageModel(model: ImageModelConfig): boolean {
-  return Boolean(model.name.trim() && model.modelId.trim() && model.apiKey.trim() && model.baseUrl.trim());
+function getStringField(value: unknown): string {
+  return typeof value === 'string' ? value : '';
 }
 
-function isCompleteTextModel(model: TextModelConfig): boolean {
-  return Boolean(model.name.trim() && model.modelId.trim() && model.apiKey.trim() && model.baseUrl.trim());
+function isCompleteImageModel(model: ImageModelConfig, baseUrlOverride = ''): boolean {
+  return Boolean(
+    getStringField(model.name).trim()
+    && getStringField(model.modelId).trim()
+    && getStringField(model.apiKey).trim()
+    && (getStringField(model.baseUrl).trim() || baseUrlOverride)
+  );
+}
+
+function isCompleteTextModel(model: TextModelConfig, baseUrlOverride = ''): boolean {
+  return Boolean(
+    getStringField(model.name).trim()
+    && getStringField(model.modelId).trim()
+    && getStringField(model.apiKey).trim()
+    && (getStringField(model.baseUrl).trim() || baseUrlOverride)
+  );
 }
 
 function getImageModelLabel(models: ImageModelConfig[], id: string): string {
@@ -113,13 +129,88 @@ function getTextModelLabel(models: TextModelConfig[], id: string): string {
   return models.find((model) => model.id === id)?.name || id;
 }
 
+function isApiKeyActive(option: NovaApiKeyOption): boolean {
+  return option.status === 'active' && option.groupStatus !== 'inactive';
+}
+
+function getApiKeyPlatformForProtocol(protocol: ProviderProtocol): string {
+  return protocol === 'google' ? 'gemini' : 'openai';
+}
+
+function isApiKeyPlatformMatch(option: NovaApiKeyOption, protocol: ProviderProtocol): boolean {
+  return option.platform.toLowerCase() === getApiKeyPlatformForProtocol(protocol);
+}
+
+function isApiKeySelectable(apiKeys: NovaApiKeyOption[], protocol: ProviderProtocol, apiKey: unknown): boolean {
+  return Boolean(typeof apiKey === 'string' && apiKey && apiKeys.some((option) => (
+    option.key === apiKey && isApiKeyActive(option) && isApiKeyPlatformMatch(option, protocol)
+  )));
+}
+
+function getApiKeyOptionsForProtocol(
+  apiKeys: NovaApiKeyOption[],
+  protocol: ProviderProtocol,
+) {
+  return apiKeys
+    .filter((option) => isApiKeyActive(option) && isApiKeyPlatformMatch(option, protocol))
+    .map((option) => ({ value: option.key, label: option.label }));
+}
+
+function isCompleteImageModelWithSelectedKey(model: ImageModelConfig, baseUrlOverride: string, apiKeys: NovaApiKeyOption[]): boolean {
+  return isCompleteImageModel(model, baseUrlOverride) && isApiKeySelectable(apiKeys, model.protocol, model.apiKey);
+}
+
+function isCompleteTextModelWithSelectedKey(model: TextModelConfig, baseUrlOverride: string, apiKeys: NovaApiKeyOption[]): boolean {
+  return isCompleteTextModel(model, baseUrlOverride) && isApiKeySelectable(apiKeys, model.protocol, model.apiKey);
+}
+
+function clearInvalidImageApiKeys(models: ImageModelConfig[], apiKeys: NovaApiKeyOption[]): ImageModelConfig[] {
+  let changed = false;
+  const next = models.map((model) => {
+    if (typeof model.apiKey !== 'string' || !model.apiKey) {
+      if (model.apiKey === '') return model;
+      changed = true;
+      return { ...model, apiKey: '' };
+    }
+    if (isApiKeySelectable(apiKeys, model.protocol, model.apiKey)) return model;
+    changed = true;
+    return { ...model, apiKey: '' };
+  });
+  return changed ? next : models;
+}
+
+function clearInvalidTextApiKeys(models: TextModelConfig[], apiKeys: NovaApiKeyOption[]): TextModelConfig[] {
+  let changed = false;
+  const next = models.map((model) => {
+    if (typeof model.apiKey !== 'string' || !model.apiKey) {
+      if (model.apiKey === '') return model;
+      changed = true;
+      return { ...model, apiKey: '' };
+    }
+    if (isApiKeySelectable(apiKeys, model.protocol, model.apiKey)) return model;
+    changed = true;
+    return { ...model, apiKey: '' };
+  });
+  return changed ? next : models;
+}
+
 function normalizeDefaults(
   defaults: DefaultModels,
   imageModels: ImageModelConfig[],
   textModels: TextModelConfig[],
+  baseUrlOverride = '',
+  apiKeys?: NovaApiKeyOption[],
 ): DefaultModels {
-  const completeImageModels = imageModels.filter(isCompleteImageModel);
-  const completeTextModels = textModels.filter(isCompleteTextModel);
+  const completeImageModels = imageModels.filter((model) => (
+    apiKeys
+      ? isCompleteImageModelWithSelectedKey(model, baseUrlOverride, apiKeys)
+      : isCompleteImageModel(model, baseUrlOverride)
+  ));
+  const completeTextModels = textModels.filter((model) => (
+    apiKeys
+      ? isCompleteTextModelWithSelectedKey(model, baseUrlOverride, apiKeys)
+      : isCompleteTextModel(model, baseUrlOverride)
+  ));
   const firstImageModelId = completeImageModels[0]?.id || '';
   const firstTextModelId = completeTextModels[0]?.id || '';
 
@@ -144,6 +235,12 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
   const [checkingModels, setCheckingModels] = useState(false);
   const [modelStatuses, setModelStatuses] = useState<ModelStatus[] | null>(null);
   const [modelCheckError, setModelCheckError] = useState<string | null>(null);
+  const [serverConfig, setServerConfig] = useState<NovaServerConfig | null>(null);
+  const [editedBaseUrlModelIds, setEditedBaseUrlModelIds] = useState<Set<string>>(() => new Set());
+  const [apiKeys, setApiKeys] = useState<NovaApiKeyOption[]>([]);
+  const [apiKeyLoading, setApiKeyLoading] = useState(false);
+  const [apiKeysLoaded, setApiKeysLoaded] = useState(false);
+  const [apiKeyError, setApiKeyError] = useState<string | null>(null);
 
   const [backupProgress, setBackupProgress] = useState<BackupProgressType>({ percent: 0, message: '' });
   const [isBackupActive, setIsBackupActive] = useState(false);
@@ -154,6 +251,8 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
   useEffect(() => {
     if (!isOpen) return;
     const registry = loadRegistry();
+    setServerConfig(null);
+    setEditedBaseUrlModelIds(new Set());
     setImageModels(registry.imageModels.map(cloneImageModel));
     setTextModels(registry.textModels.map(cloneTextModel));
     setDefaults(normalizeDefaults(registry.defaults, registry.imageModels, registry.textModels));
@@ -163,17 +262,57 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
     setSuccess(null);
     setModelStatuses(null);
     setModelCheckError(null);
+    setApiKeys([]);
+    setApiKeyError(null);
+    setApiKeysLoaded(false);
+    setApiKeyLoading(false);
     setBackupError(null);
     setBackupSuccess(null);
+    let cancelled = false;
+    loadNovaServerConfig()
+      .then((config) => {
+        if (!cancelled) setServerConfig(config);
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
   }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
+    const controller = new AbortController();
+    setApiKeyLoading(true);
+    setApiKeyError(null);
+    loadNovaApiKeys(controller.signal)
+      .then((keys) => setApiKeys(keys))
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setApiKeyError(err instanceof Error ? err.message : '密钥列表加载失败');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setApiKeyLoading(false);
+          setApiKeysLoaded(true);
+        }
+      });
+    return () => controller.abort();
+  }, [isOpen]);
+
+  const novaApiBaseUrl = serverConfig?.novaApiBaseUrl || '';
+  const novaApiBaseUrlLocked = Boolean(novaApiBaseUrl && serverConfig?.novaApiBaseUrlLocked);
+
+  useEffect(() => {
+    if (!isOpen) return;
     setDefaults((prev) => {
-      const next = normalizeDefaults(prev, imageModels, textModels);
+      const next = normalizeDefaults(prev, imageModels, textModels, novaApiBaseUrl, apiKeys);
       return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
     });
-  }, [imageModels, isOpen, textModels]);
+  }, [apiKeys, imageModels, isOpen, novaApiBaseUrl, textModels]);
+
+  useEffect(() => {
+    if (!isOpen || !apiKeysLoaded) return;
+    setImageModels((prev) => clearInvalidImageApiKeys(prev, apiKeys));
+    setTextModels((prev) => clearInvalidTextApiKeys(prev, apiKeys));
+  }, [apiKeys, apiKeysLoaded, isOpen]);
 
   const selectedImageModel = useMemo(
     () => imageModels.find((model) => model.id === selectedImageModelId) || null,
@@ -207,9 +346,24 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
       if (patch.protocol === 'google') {
         next.supportsAdvancedParams = false;
       }
+      if (apiKeysLoaded && !isApiKeySelectable(apiKeys, next.protocol, next.apiKey)) {
+        next.apiKey = '';
+      }
       return next;
     }));
   };
+
+  const markBaseUrlEdited = (id: string) => {
+    setEditedBaseUrlModelIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  };
+
+  const getBaseUrlInputValue = (id: string, baseUrl: string) => (
+    novaApiBaseUrl && !editedBaseUrlModelIds.has(id) ? novaApiBaseUrl : getStringField(baseUrl)
+  );
 
   const handleDeleteImageModel = (id: string) => {
     const nextModels = imageModels.filter((model) => model.id !== id);
@@ -242,7 +396,14 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
   };
 
   const handleUpdateTextModel = (id: string, patch: Partial<TextModelConfig>) => {
-    setTextModels((prev) => prev.map((model) => (model.id === id ? { ...model, ...patch } : model)));
+    setTextModels((prev) => prev.map((model) => {
+      if (model.id !== id) return model;
+      const next = { ...model, ...patch };
+      if (apiKeysLoaded && !isApiKeySelectable(apiKeys, next.protocol, next.apiKey)) {
+        next.apiKey = '';
+      }
+      return next;
+    }));
   };
 
   const handleDeleteTextModel = (id: string) => {
@@ -269,19 +430,27 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
       setError('至少填写一个文本模型');
       return;
     }
-    if (!imageModels.some(isCompleteImageModel)) {
+    if (apiKeyLoading || !apiKeysLoaded) {
+      setError('密钥列表加载中，请稍后再保存');
+      return;
+    }
+    const nextImageModels = clearInvalidImageApiKeys(imageModels, apiKeys);
+    const nextTextModels = clearInvalidTextApiKeys(textModels, apiKeys);
+    if (nextImageModels !== imageModels) setImageModels(nextImageModels);
+    if (nextTextModels !== textModels) setTextModels(nextTextModels);
+    if (!nextImageModels.some((model) => isCompleteImageModelWithSelectedKey(model, novaApiBaseUrl, apiKeys))) {
       setError('至少完成一个图片模型的全部信息');
       return;
     }
-    if (!textModels.some(isCompleteTextModel)) {
+    if (!nextTextModels.some((model) => isCompleteTextModelWithSelectedKey(model, novaApiBaseUrl, apiKeys))) {
       setError('至少完成一个文本模型的全部信息');
       return;
     }
 
     const registry = {
-      imageModels,
-      textModels,
-      defaults: normalizeDefaults(defaults, imageModels, textModels),
+      imageModels: nextImageModels,
+      textModels: nextTextModels,
+      defaults: normalizeDefaults(defaults, nextImageModels, nextTextModels, novaApiBaseUrl, apiKeys),
     };
 
     saveRegistry(registry);
@@ -296,8 +465,8 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
 
   const handleCheckModels = async () => {
     const configuredModels = [
-      ...imageModels.filter(isCompleteImageModel),
-      ...textModels.filter(isCompleteTextModel),
+      ...imageModels.filter((model) => isCompleteImageModelWithSelectedKey(model, novaApiBaseUrl, apiKeys)),
+      ...textModels.filter((model) => isCompleteTextModelWithSelectedKey(model, novaApiBaseUrl, apiKeys)),
     ];
     if (configuredModels.length === 0) {
       setModelCheckError('请先完成至少一个图片模型或文本模型配置');
@@ -358,9 +527,24 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const completeImageOptions = imageModels.filter(isCompleteImageModel).map((model) => ({ value: model.id, label: model.name }));
-  const completeTextOptions = textModels.filter(isCompleteTextModel).map((model) => ({ value: model.id, label: model.name }));
+  const completeImageOptions = imageModels.filter((model) => isCompleteImageModelWithSelectedKey(model, novaApiBaseUrl, apiKeys)).map((model) => ({ value: model.id, label: model.name }));
+  const completeTextOptions = textModels.filter((model) => isCompleteTextModelWithSelectedKey(model, novaApiBaseUrl, apiKeys)).map((model) => ({ value: model.id, label: model.name }));
   const selectedImageOutputSizes = selectedImageModel ? getImageModelOutputSizes(selectedImageModel) : ['1K'];
+  const selectedImageApiKeyOptions = selectedImageModel
+    ? getApiKeyOptionsForProtocol(apiKeys, selectedImageModel.protocol)
+    : [];
+  const selectedTextApiKeyOptions = selectedTextModel
+    ? getApiKeyOptionsForProtocol(apiKeys, selectedTextModel.protocol)
+    : [];
+  const selectedImageApiKeyValue = selectedImageModel && isApiKeySelectable(apiKeys, selectedImageModel.protocol, selectedImageModel.apiKey)
+    ? selectedImageModel.apiKey
+    : '';
+  const selectedTextApiKeyValue = selectedTextModel && isApiKeySelectable(apiKeys, selectedTextModel.protocol, selectedTextModel.apiKey)
+    ? selectedTextModel.apiKey
+    : '';
+  const isApiKeySelectDisabled = (options: { value: string; label: string }[]) => (
+    apiKeyLoading || Boolean(apiKeyError) || apiKeys.length === 0 || options.length === 0
+  );
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => {
@@ -406,6 +590,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
 
             {error && <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
             {success && <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-400">{success}</div>}
+            {apiKeyError && <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{apiKeyError}</div>}
 
             <div className="rounded-xl border p-4 space-y-4">
               <div className="flex items-center justify-between gap-3">
@@ -429,7 +614,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
                       className={`w-full rounded-lg border px-3 py-2 text-left text-sm ${selectedImageModelId === model.id ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'}`}
                     >
                       <div className="font-medium">{model.name || '未命名模型'}</div>
-                      <div className="text-xs text-muted-foreground">{isCompleteImageModel(model) ? '配置完成' : '待补全'}</div>
+                      <div className="text-xs text-muted-foreground">{isCompleteImageModelWithSelectedKey(model, novaApiBaseUrl, apiKeys) ? '配置完成' : '待补全'}</div>
                     </button>
                   ))}
                 </div>
@@ -465,11 +650,24 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">Base URL</label>
-                      <Input value={selectedImageModel.baseUrl} onChange={(event) => handleUpdateImageModel(selectedImageModel.id, { baseUrl: event.target.value })} />
+                      <Input
+                        value={getBaseUrlInputValue(selectedImageModel.id, selectedImageModel.baseUrl)}
+                        onChange={(event) => {
+                          markBaseUrlEdited(selectedImageModel.id);
+                          handleUpdateImageModel(selectedImageModel.id, { baseUrl: event.target.value });
+                        }}
+                        readOnly={novaApiBaseUrlLocked}
+                      />
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">API Key</label>
-                      <Input type="password" value={selectedImageModel.apiKey} onChange={(event) => handleUpdateImageModel(selectedImageModel.id, { apiKey: event.target.value })} />
+                      <Select
+                        value={selectedImageApiKeyValue}
+                        onValueChange={(value) => handleUpdateImageModel(selectedImageModel.id, { apiKey: value })}
+                        options={selectedImageApiKeyOptions}
+                        placeholder={apiKeyLoading ? '加载中...' : '选择密钥'}
+                        disabled={isApiKeySelectDisabled(selectedImageApiKeyOptions)}
+                      />
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">最大参考图数量</label>
@@ -528,7 +726,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
                       className={`w-full rounded-lg border px-3 py-2 text-left text-sm ${selectedTextModelId === model.id ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'}`}
                     >
                       <div className="font-medium">{model.name || '未命名模型'}</div>
-                      <div className="text-xs text-muted-foreground">{isCompleteTextModel(model) ? '配置完成' : '待补全'}</div>
+                      <div className="text-xs text-muted-foreground">{isCompleteTextModelWithSelectedKey(model, novaApiBaseUrl, apiKeys) ? '配置完成' : '待补全'}</div>
                     </button>
                   ))}
                 </div>
@@ -560,11 +758,24 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">Base URL</label>
-                      <Input value={selectedTextModel.baseUrl} onChange={(event) => handleUpdateTextModel(selectedTextModel.id, { baseUrl: event.target.value })} />
+                      <Input
+                        value={getBaseUrlInputValue(selectedTextModel.id, selectedTextModel.baseUrl)}
+                        onChange={(event) => {
+                          markBaseUrlEdited(selectedTextModel.id);
+                          handleUpdateTextModel(selectedTextModel.id, { baseUrl: event.target.value });
+                        }}
+                        readOnly={novaApiBaseUrlLocked}
+                      />
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">API Key</label>
-                      <Input type="password" value={selectedTextModel.apiKey} onChange={(event) => handleUpdateTextModel(selectedTextModel.id, { apiKey: event.target.value })} />
+                      <Select
+                        value={selectedTextApiKeyValue}
+                        onValueChange={(value) => handleUpdateTextModel(selectedTextModel.id, { apiKey: value })}
+                        options={selectedTextApiKeyOptions}
+                        placeholder={apiKeyLoading ? '加载中...' : '选择密钥'}
+                        disabled={isApiKeySelectDisabled(selectedTextApiKeyOptions)}
+                      />
                     </div>
                     <div className="space-y-2 md:col-span-2">
                       <label className="text-xs text-muted-foreground">协议描述</label>

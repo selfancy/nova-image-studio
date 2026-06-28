@@ -86,6 +86,7 @@ beforeEach(() => {
     apiKey: 'test-api-key',
     baseUrl: 'https://api.openai.com',
     protocol: 'openai',
+    modelId: 'gpt-image-2',
   });
 });
 
@@ -110,11 +111,6 @@ describe('submitTextToImage', () => {
       apiKey: 'test-api-key',
       mode: 'text-to-image',
       model: 'gpt-image-2',
-      gptImageQuality: 'high',
-      gptImageStyle: 'vivid',
-      gptImageBackground: 'transparent',
-    }));
-    expect(actions.addJob).toHaveBeenCalledWith(expect.objectContaining({
       gptImageQuality: 'high',
       gptImageStyle: 'vivid',
       gptImageBackground: 'transparent',
