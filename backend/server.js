@@ -7,7 +7,6 @@ const next = process.env.NODE_ENV !== 'production' ? require('next') : null;
 const Database = require('better-sqlite3');
 const { WebSocketServer } = require('ws');
 
-const ENV_FILE_PATH = path.join(process.cwd(), '.env');
 const TASK_STATUS = {
   QUEUED: '排队中',
   LEGACY_QUEUED: 'queued',
@@ -32,53 +31,9 @@ const LIMIT_ERROR_MESSAGES = {
   notAcceptingTasks: '服务器正在升级维护，暂不接受新任务。未完成任务将继续完成。',
 };
 
-function parseEnvFile(filePath = ENV_FILE_PATH) {
-  if (!fs.existsSync(filePath)) return {};
-
-  const values = {};
-  const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-
-    const separatorIndex = trimmed.indexOf('=');
-    if (separatorIndex <= 0) continue;
-
-    const key = trimmed.slice(0, separatorIndex).trim();
-    const rawValue = trimmed.slice(separatorIndex + 1).trim();
-    const value = rawValue.replace(/^['"]|['"]$/g, '');
-    values[key] = value;
-  }
-  return values;
-}
-
-// .env 运行期读取加 1 秒 TTL 缓存：原本每次调用都同步 readFileSync，而
-// getQueueStats / 建任务 / 队列广播 / WS 订阅 / 出图前都走它（单次 getQueueStats
-// 触发 3 次读盘），在事件循环上造成不必要的同步 IO。1 秒对"改 .env 实时生效"
-// 而言对人类无感，符合 README 承诺。
-let _runtimeEnvCache = { values: null, expiresAt: 0 };
-
 function getRuntimeEnv() {
-  const now = Date.now();
-  if (!_runtimeEnvCache.values || now >= _runtimeEnvCache.expiresAt) {
-    _runtimeEnvCache = {
-      values: { ...process.env, ...parseEnvFile() },
-      expiresAt: now + 1000,
-    };
-  }
-  return _runtimeEnvCache.values;
+  return process.env;
 }
-
-function loadEnvFile() {
-  const values = parseEnvFile();
-  for (const [key, value] of Object.entries(values)) {
-    if (!(key in process.env)) {
-      process.env[key] = value;
-    }
-  }
-}
-
-loadEnvFile();
 
 function normalizeBaseUrl(url) {
   return String(url || '').trim().replace(/\/+$/, '');
@@ -94,7 +49,9 @@ function normalizeProtocolBaseUrl(protocol, url) {
 }
 
 function resolveNovaApiBaseUrl() {
-  return normalizeBaseUrl(getRuntimeEnv().NOVA_API_BASE_URL) || 'https://api.openai.com';
+  const baseUrl = normalizeBaseUrl(getRuntimeEnv().NOVA_API_BASE_URL);
+  if (!baseUrl) throw new Error('缺少环境变量 NOVA_API_BASE_URL');
+  return baseUrl;
 }
 
 function resolveRequestBaseUrl(protocol) {

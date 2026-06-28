@@ -168,10 +168,10 @@ nova-image-studio/
 ### 快速启动
 
 ```bash
-# 1. 复制环境变量文件（如果不是从clone下来的，则自己新建并复制过来即可）
+# 1. 复制 Compose 环境变量文件（如果不是从 clone 下来的，则自己新建并复制过来即可）
 cp backend/.env.example backend/.env
 
-# 2. 编辑 .env 按需调整配置
+# 2. 编辑 backend/.env 按需调整配置，Compose 会通过 env_file 注入为系统环境变量
 
 # 3. 创建必要的配置文件（如果不存在）
 touch blacklist.json prompts.json
@@ -187,7 +187,7 @@ docker compose up -d
 
 ### 环境变量
 
-通过 `backend/.env` 注入，无需修改镜像。修改后重启生效：
+应用只读取系统环境变量。Docker Compose 会通过 `env_file: ./backend/.env` 注入，无需修改镜像。修改后重启生效：
 
 ```bash
 docker compose restart
@@ -241,7 +241,7 @@ backend/package.json
 backend/package-lock.json
 backend/prompts.json
 backend/blacklist.json
-backend/.env          # 按生产环境调整
+backend/.env.example  # 环境变量示例，按你的进程管理方式注入系统环境变量
 ```
 
 #### 3. 在生产服务器
@@ -251,7 +251,7 @@ npm ci --omit=dev        # 必须本地装 better-sqlite3 原生模块
 npm start                # 或 npm run server
 ```
 
-`.env` 中 `NODE_ENV=production`。
+确保进程环境变量中包含 `NODE_ENV=production`。
 
 #### 4. 进程托管
 
@@ -288,12 +288,12 @@ cd nova-image-studio
 # 2. 安装依赖（自动安装根、frontend、backend）
 npm install
 
-# 3. 复制后端环境变量
+# 3. 复制后端环境变量示例
 cp backend/.env.example backend/.env
 # Windows: Copy-Item backend/.env.example backend/.env
 
-# 4. 启动开发模式（等同于 build 后用 production 模式跑 server.js）
-npm run dev
+# 4. 注入系统环境变量后启动开发模式（等同于 build 后用 production 模式跑 server.js）
+set -a; . backend/.env; set +a; npm run dev
 ```
 
 访问 <http://localhost:3000>。
@@ -336,7 +336,9 @@ docker push selfancy/nova-image-studio:latest
 
 ---
 
-## ⚙️ 环境变量（`backend/.env`）
+## ⚙️ 环境变量（系统环境变量）
+
+应用只读取进程的系统环境变量，不会主动读取 `.env` 文件。Docker Compose 部署时可以使用 `backend/.env` 作为 `env_file`，由 Compose 注入容器环境；直接运行时请使用 shell、PM2、systemd 或平台配置注入。
 
 | 变量 | 必填 | 默认 | 说明 |
 | --- | --- | --- | --- |
@@ -359,7 +361,7 @@ docker push selfancy/nova-image-studio:latest
 | `PROMPT_GALLERY_MODE` | 否 | `2` | `1` 常驻 / `2` 私密密码（点七下标题） / `3` 关闭 |
 | `PROMPT_GALLERY_PASSWORD` | 否 | 空 | 提示词广场私密模式密码；为空时私密模式可直接开启 |
 
-> `.env` 修改后大部分运行时配置**实时生效**（任务并发、限流、队列容量、接单开关、广场模式），无需重启；`PORT`、`HOSTNAME`、`NODE_ENV` 这类启动级配置仍需重启。
+> 环境变量修改后需要重启进程或容器才会生效。
 
 ---
 
@@ -400,14 +402,14 @@ UI 可以打开，但任务提交、Agent、历史同步全部依赖 `/api/nova/
 **数据库需要单独备份吗？**
 首次部署不需要，服务启动会自建。任务数据要保留就备份 `nova-tasks.sqlite`（含 WAL/SHM）以及 `nova-images/`。重启后残留任务会被自动标记为失败并清理产物。
 
-**如何临时停止接收新任务（不停服务）？**
-编辑 `.env`：
+**如何临时停止接收新任务？**
+在系统环境变量中设置：
 
 ```env
 NOVA_ACCEPT_NEW_TASKS=false
 ```
 
-保存即生效。等待在飞任务完成后即可重启升级。再次开启设为 `true` 或留空。
+重启服务后生效。等待在飞任务完成后即可升级。再次开启设为 `true` 或留空并重启。
 
 **任务多久会过期？**
 创建后 12 小时；前端在拿到结果后会调用 `/ack` 续期 2 分钟，给下载留时间。超过 TTL 服务端删除数据库记录与产物图片。
