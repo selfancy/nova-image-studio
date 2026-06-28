@@ -1,6 +1,6 @@
 services:
   nova-image-studio:
-    image: ghcr.io/selfancy/nova-image-studio:latest
+    image: ghcr.io/selfancy/image-studio:latest
     container_name: nova-image-studio
     env_file:
       - ./backend/.env

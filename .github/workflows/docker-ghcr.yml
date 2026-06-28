@@ -11,7 +11,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: selfancy/nova-image-studio
+  IMAGE_NAME: selfancy/image-studio
 
 jobs:
   publish:

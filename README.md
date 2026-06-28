@@ -321,15 +321,13 @@ npm run go             # 打包：build + 汇总到根 out.zip
 ### 构建镜像
 
 ```bash
-docker build -t nova-image-studio:latest .
+docker build -t ghcr.io/selfancy/image-studio:latest .
 ```
 
 ### 推送到仓库
 
 ```bash
-docker tag nova-image-studio:latest selfancy/nova-image-studio:latest
-
-docker push selfancy/nova-image-studio:latest
+docker push ghcr.io/selfancy/image-studio:latest
 ```
 
 </details>
