@@ -909,12 +909,12 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
                 项目地址：
                 {' '}
                 <a
-                  href="https://github.com/tianjiangqiji/nova-image-studio"
+                  href="https://github.com/selfancy/nova-image-studio"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-primary hover:underline"
                 >
-                  tianjiangqiji/nova-image-studio <ExternalLink className="w-3 h-3" />
+                  selfancy/nova-image-studio <ExternalLink className="w-3 h-3" />
                 </a>
               </p>
 
@@ -985,8 +985,8 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
                   <li>
                     项目仓库：
                     {' '}
-                    <a href="https://github.com/tianjiangqiji/nova-image-studio" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
-                      tianjiangqiji/nova-image-studio <ExternalLink className="w-3 h-3" />
+                    <a href="https://github.com/selfancy/nova-image-studio" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
+                      selfancy/nova-image-studio <ExternalLink className="w-3 h-3" />
                     </a>
                   </li>
                   <li>

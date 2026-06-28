@@ -282,7 +282,7 @@ npm run go
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/tianjiangqiji/nova-image-studio.git
+git clone https://github.com/selfancy/nova-image-studio.git
 cd nova-image-studio
 
 # 2. 安装依赖（自动安装根、frontend、backend）
@@ -327,9 +327,9 @@ docker build -t nova-image-studio:latest .
 ### 推送到仓库
 
 ```bash
-docker tag nova-image-studio:latest tianjiangqiji/nova-image-studio:latest
+docker tag nova-image-studio:latest selfancy/nova-image-studio:latest
 
-docker push tianjiangqiji/nova-image-studio:latest
+docker push selfancy/nova-image-studio:latest
 ```
 
 </details>
@@ -345,6 +345,8 @@ docker push tianjiangqiji/nova-image-studio:latest
 | `NODE_ENV` | **是** | `production` | **必须为 `production`**，否则会走 Next dev 模式 |
 | `NOVA_TASK_DB` | 否 | `./nova-tasks.sqlite` | SQLite 文件路径，建议放到持久化目录 |
 | `NOVA_TASK_CONCURRENCY` | 否 | `50` | 最大并发任务数（绝对上限 50） |
+| `NOVA_API_BASE_URL` | **是** | 空 | 上游 API 基础地址；后端实际请求使用此地址，页面中的 Base URL 仅展示 |
+| `NOVA_API_BASE_URL_LOCK` | 否 | `false` | 值为小写 `true` 且 `NOVA_API_BASE_URL` 有值时，设置页 Base URL 只读 |
 | `NOVA_MAX_QUEUE_SIZE` | 否 | `200` | 全局最大待处理任务数 |
 | `NOVA_RATE_LIMIT_WINDOW_MS` | 否 | `60000` | 创建任务速率限制窗口，单位毫秒 |
 | `NOVA_RATE_LIMIT_MAX_REQUESTS_PER_IP` | 否 | `20` | 单 IP 在一个窗口内最多创建多少个任务 |
@@ -353,6 +355,7 @@ docker push tianjiangqiji/nova-image-studio:latest
 | `NOVA_MAX_PENDING_TASKS_PER_API_KEY` | 否 | `10` | 单 API Key 最多同时拥有多少个待处理任务 |
 | `NOVA_RATE_LIMIT_RETRY_AFTER_SECONDS` | 否 | `30` | 队列满/限流时响应头 `Retry-After` 秒数 |
 | `NOVA_IMAGE_DIR` | 否 | `backend/nova-images/` | 任务产物落盘目录 |
+| `NOVA_SAVE_IMAGE_ENABLED` | 否 | `false` | 值为小写 `true` 时保留服务端图片；其他值为临时中转，前端取走并 ack 后删除 |
 | `PROMPT_GALLERY_MODE` | 否 | `2` | `1` 常驻 / `2` 私密密码（点七下标题） / `3` 关闭 |
 | `PROMPT_GALLERY_PASSWORD` | 否 | 空 | 提示词广场私密模式密码；为空时私密模式可直接开启 |
 
@@ -445,11 +448,11 @@ NOVA_ACCEPT_NEW_TASKS=false
 ## Star History
 
 
-<a href="https://www.star-history.com/?repos=tianjiangqiji%2Fnova-image-studio&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=selfancy%2Fnova-image-studio&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=tianjiangqiji/nova-image-studio&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=tianjiangqiji/nova-image-studio&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=tianjiangqiji/nova-image-studio&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=selfancy/nova-image-studio&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=selfancy/nova-image-studio&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=selfancy/nova-image-studio&type=date&legend=top-left" />
  </picture>
 </a>
 
