@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { hasAnyApiKey } from '@/lib/settings-storage';
+import { MODEL_REGISTRY_UPDATED_EVENT } from '@/lib/nova-models';
 import {
   deleteImage,
   loadJobs,
@@ -24,7 +25,7 @@ function loadInitialJobs(): StoredJob[] {
   return loadJobs().map(job => ({
     ...job,
     ...(isWaitingJob(job) && !job.serverTaskId ? { status: 'failed' as const, error: '页面刷新，任务已中断', terminal: true } : {}),
-    ...(!job.model ? { model: 'gemini-3-pro-image-preview' as ModelId } : {}),
+    ...(!job.model ? { model: 'gemini-3-pro-image' as ModelId } : {}),
   }));
 }
 
@@ -37,6 +38,12 @@ export function useWorkspaceJobs() {
   const [retryData, setRetryData] = useState<RetryData | null>(null);
   const [clearAllDialogOpen, setClearAllDialogOpen] = useState<Mode | null>(null);
   const [cancelJobId, setCancelJobId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const refreshApiKeyState = () => setHasApiKey(hasAnyApiKey());
+    window.addEventListener(MODEL_REGISTRY_UPDATED_EVENT, refreshApiKeyState);
+    return () => window.removeEventListener(MODEL_REGISTRY_UPDATED_EVENT, refreshApiKeyState);
+  }, []);
 
   useEffect(() => {
     const stored = loadInitialJobs();

@@ -39,7 +39,7 @@ function makeJob(overrides: Partial<StoredJob> = {}): StoredJob {
     output_size: '1K',
     temperature: 1,
     aspect_ratio: '1:1',
-    model: 'gemini-3-pro-image-preview',
+    model: 'gemini-3-pro-image',
     created_at: '2026-06-07T00:00:00.000Z',
     serverTaskId: 'task-1',
     ...overrides,

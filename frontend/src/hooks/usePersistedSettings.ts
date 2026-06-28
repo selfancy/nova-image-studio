@@ -13,7 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  *
  * @example
  * const [settings, updateSettings] = usePersistedSettings('nova-t2i-settings', {
- *   model: 'gemini-3-pro-image-preview' as ModelId,
+ *   model: 'gemini-3-pro-image' as ModelId,
  *   outputSize: '1K' as OutputSize,
  *   temperature: 1,
  * });

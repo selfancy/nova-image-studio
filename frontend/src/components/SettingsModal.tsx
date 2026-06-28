@@ -41,6 +41,7 @@ import {
   getCompleteTextModels,
   getImageModelOutputSizes,
   loadRegistry,
+  MODEL_REGISTRY_UPDATED_EVENT,
   saveRegistry,
   type DefaultModels,
   type ImageModelConfig,
@@ -455,7 +456,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
 
     saveRegistry(registry);
     syncDynamicModelExports();
-    window.dispatchEvent(new Event('nova-model-registry-updated'));
+    window.dispatchEvent(new Event(MODEL_REGISTRY_UPDATED_EVENT));
     onApiKeyChange?.(hasAnyApiKey());
     setSuccess('设置已保存');
     setError(null);

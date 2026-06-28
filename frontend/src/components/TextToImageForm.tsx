@@ -72,7 +72,7 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
 
   const disabledMessage = '请先在设置中配置 Nova API 密钥，配置完成后即可开始生成图片。';
 
-  const [model, setModel] = useState<ModelId>('gemini-3-pro-image-preview');
+  const [model, setModel] = useState<ModelId>('gemini-3-pro-image');
   const [outputSize, setOutputSize] = useState<OutputSize>('1K');
   const [customSize, setCustomSize] = useState<string | undefined>(undefined);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');

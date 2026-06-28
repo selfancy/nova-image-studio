@@ -1,10 +1,42 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { TextToImageForm } from '../TextToImageForm'
+import { syncDynamicModelExports } from '@/lib/gemini-config'
+import { BUILTIN_IMAGE_PRESETS, saveRegistry } from '@/lib/nova-models'
+
+function seedModelRegistry() {
+  const bananaPro = BUILTIN_IMAGE_PRESETS['gemini-3-pro-image']
+  const gptImage = BUILTIN_IMAGE_PRESETS['gpt-image-2']
+  saveRegistry({
+    imageModels: [
+      {
+        ...bananaPro,
+        apiKey: 'test-gemini-key',
+        builtinPreset: bananaPro.id,
+      },
+      {
+        ...gptImage,
+        apiKey: 'test-openai-key',
+        builtinPreset: gptImage.id,
+      },
+    ],
+    textModels: [],
+    defaults: {
+      textToImage: bananaPro.id,
+      imageToImage: bananaPro.id,
+      reversePrompt: '',
+      agent: '',
+      promptOptimize: '',
+      imageDescribe: '',
+    },
+  })
+  syncDynamicModelExports()
+}
 
 describe('TextToImageForm', () => {
   beforeEach(() => {
     localStorage.clear()
+    seedModelRegistry()
   })
 
   it('renders the form with placeholder text', () => {
@@ -46,7 +78,7 @@ describe('TextToImageForm', () => {
       outputSize: '1K',
       aspectRatio: '1:1',
       temperature: 1,
-      model: 'gemini-3-pro-image-preview',
+      model: 'gemini-3-pro-image',
       gptImageQuality: 'auto',
       gptImageStyle: 'auto',
       gptImageBackground: 'auto',

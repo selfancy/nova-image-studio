@@ -4,8 +4,8 @@ export type ProviderProtocol = 'google' | 'openai';
 export type ImageOutputSize = '512' | '1K' | '2K' | '4K';
 export type BuiltinImagePresetId =
   | 'gemini-2.5-flash-image'
-  | 'gemini-3-pro-image-preview'
-  | 'gemini-3.1-flash-image-preview'
+  | 'gemini-3-pro-image'
+  | 'gemini-3.1-flash-image'
   | 'gpt-image-2';
 
 export interface ImageModelConfig {
@@ -58,6 +58,7 @@ export interface NovaModelRegistry {
 }
 
 const REGISTRY_KEY = 'nova-model-registry';
+export const MODEL_REGISTRY_UPDATED_EVENT = 'nova-model-registry-updated';
 
 export const BUILTIN_IMAGE_PRESETS: Record<BuiltinImagePresetId, BuiltinImagePreset> = {
   'gemini-2.5-flash-image': {
@@ -70,21 +71,21 @@ export const BUILTIN_IMAGE_PRESETS: Record<BuiltinImagePresetId, BuiltinImagePre
     maxOutputSize: '1K',
     supportsAdvancedParams: false,
   },
-  'gemini-3-pro-image-preview': {
-    id: 'gemini-3-pro-image-preview',
+  'gemini-3-pro-image': {
+    id: 'gemini-3-pro-image',
     protocol: 'google',
     name: 'Banana Pro',
-    modelId: 'gemini-3-pro-image-preview',
+    modelId: 'gemini-3-pro-image',
     baseUrl: 'https://generativelanguage.googleapis.com',
     maxRefImages: 11,
     maxOutputSize: '4K',
     supportsAdvancedParams: false,
   },
-  'gemini-3.1-flash-image-preview': {
-    id: 'gemini-3.1-flash-image-preview',
+  'gemini-3.1-flash-image': {
+    id: 'gemini-3.1-flash-image',
     protocol: 'google',
     name: 'Banana 2',
-    modelId: 'gemini-3.1-flash-image-preview',
+    modelId: 'gemini-3.1-flash-image',
     baseUrl: 'https://generativelanguage.googleapis.com',
     maxRefImages: 14,
     maxOutputSize: '4K',
@@ -158,7 +159,7 @@ function normalizeStringField(value: unknown): string {
 function inferBuiltinPresetId(raw: Partial<ImageModelConfig>): BuiltinImagePresetId {
   const candidate = raw.builtinPreset || raw.id || raw.modelId;
   if (isBuiltinImagePresetId(candidate)) return candidate;
-  if (normalizeStringField(raw.protocol) === 'google') return 'gemini-3-pro-image-preview';
+  if (normalizeStringField(raw.protocol) === 'google') return 'gemini-3-pro-image';
   return 'gpt-image-2';
 }
 
@@ -328,18 +329,18 @@ export function getCompleteTextModels(registry: NovaModelRegistry): TextModelCon
 export function getImageModelOutputSizes(model: ImageModelConfig): ImageOutputSize[] {
   switch (model.maxOutputSize) {
     case '4K':
-      return model.builtinPreset === 'gemini-3.1-flash-image-preview'
+      return model.builtinPreset === 'gemini-3.1-flash-image'
         ? ['512', '1K', '2K', '4K']
         : ['1K', '2K', '4K'];
     case '2K':
-      return model.builtinPreset === 'gemini-3.1-flash-image-preview'
+      return model.builtinPreset === 'gemini-3.1-flash-image'
         ? ['512', '1K', '2K']
         : ['1K', '2K'];
     case '512':
       return ['512'];
     case '1K':
     default:
-      return model.builtinPreset === 'gemini-3.1-flash-image-preview'
+      return model.builtinPreset === 'gemini-3.1-flash-image'
         ? ['512', '1K']
         : ['1K'];
   }

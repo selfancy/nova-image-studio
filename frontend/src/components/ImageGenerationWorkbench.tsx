@@ -16,7 +16,7 @@ import { streamPromptOptimize, type StreamPromptOptimizeHandle } from '@/lib/pro
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
 import { requireDefaultConfiguredTextModel } from '@/lib/model-endpoints';
 import { addTextAsset, getAssetBlob, type ImageAsset, type TextAsset } from '@/lib/asset-store';
-import { MODEL_IMAGE_LIMITS, MODEL_OPTIONS, type ModelId } from '@/lib/gemini-config';
+import { getDefaultModelId, MODEL_IMAGE_LIMITS, MODEL_OPTIONS, type ModelId } from '@/lib/gemini-config';
 import {
   DEFAULT_GPT_IMAGE_ADVANCED_PARAMS,
   detectClosestAspectRatio,
@@ -39,6 +39,7 @@ import { dispatchImageActionToast } from '@/lib/image-actions';
 import type { AspectRatio, OutputSize, RefImageData } from '@/lib/job-store';
 import type { ImageFormSettings } from '@/lib/form-settings';
 import type { ImageToImageSubmitInput, TextToImageSubmitInput } from '@/lib/workspace-task-service';
+import { MODEL_REGISTRY_UPDATED_EVENT } from '@/lib/nova-models';
 import { cn } from '@/lib/utils';
 
 const WORKBENCH_SETTINGS_KEY = 'nova-image-generation-settings';
@@ -98,6 +99,13 @@ function getSettingsFallback(preferImageSettings: boolean): Partial<WorkbenchSet
   return loadJsonFromStorage<WorkbenchSettings>(preferImageSettings ? T2I_SETTINGS_KEY : I2I_SETTINGS_KEY);
 }
 
+function getAvailableImageModelId(currentModel: ModelId): ModelId | null {
+  if (MODEL_OPTIONS.some(option => option.value === currentModel)) return currentModel;
+  const defaultModel = getDefaultModelId();
+  if (MODEL_OPTIONS.some(option => option.value === defaultModel)) return defaultModel;
+  return MODEL_OPTIONS[0]?.value || null;
+}
+
 export function ImageGenerationWorkbench({
   onSubmitText,
   onSubmitImage,
@@ -112,7 +120,7 @@ export function ImageGenerationWorkbench({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const formRef = useRef<HTMLDivElement>(null);
 
-  const [model, setModel] = useState<ModelId>('gemini-3-pro-image-preview');
+  const [model, setModel] = useState<ModelId>('gemini-3-pro-image');
   const [outputSize, setOutputSize] = useState<OutputSize>('1K');
   const [customSize, setCustomSize] = useState<string | undefined>(undefined);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
@@ -217,6 +225,31 @@ export function ImageGenerationWorkbench({
       cancelled = true;
     };
   }, [initialData]);
+
+  useEffect(() => {
+    const refreshModelSelection = () => {
+      setModel((currentModel) => {
+        const nextModel = getAvailableImageModelId(currentModel);
+        if (!nextModel || nextModel === currentModel) return currentModel;
+
+        const validSizes = getValidOutputSizes(nextModel);
+        const nextOutputSize = validSizes.includes(outputSize) ? outputSize : validSizes[0];
+        setOutputSize(nextOutputSize);
+        setCustomSize((currentCustomSize) => (
+          supportsCustomSize(nextModel) ? normalizeCustomImageSize(currentCustomSize, getCustomSizeMaxSide(nextModel)) : undefined
+        ));
+        setAspectRatio((currentAspectRatio) => {
+          const validRatios = getAspectRatioOptions(nextModel, nextOutputSize).map(option => option.value);
+          return validRatios.includes(currentAspectRatio) ? currentAspectRatio : (validRatios[0] || '1:1');
+        });
+        setGptImageAdvancedParams((currentParams) => getGptImageAdvancedParamsForModel(nextModel, currentParams));
+        return nextModel;
+      });
+    };
+
+    window.addEventListener(MODEL_REGISTRY_UPDATED_EVENT, refreshModelSelection);
+    return () => window.removeEventListener(MODEL_REGISTRY_UPDATED_EVENT, refreshModelSelection);
+  }, [outputSize]);
 
   useEffect(() => {
     if (!settingsReady) return;
