@@ -27,6 +27,10 @@ FROM node:22-slim AS production
 
 WORKDIR /app
 
+LABEL org.opencontainers.image.source="https://github.com/selfancy/nova-image-studio"
+LABEL org.opencontainers.image.description="Nova Image Studio"
+LABEL org.opencontainers.image.licenses="AGPL-3.0"
+
 ENV NODE_ENV=production
 
 COPY backend/ ./backend/
